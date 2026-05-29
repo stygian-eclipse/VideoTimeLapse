@@ -1,102 +1,87 @@
 # VideoTimeLapse
 
-VideoTimeLapse is a fully local Python utility with a browser UI that combines multiple MP4 clips into one silent timelapse MP4.  
-It sorts clips naturally by filename (for example `1.mp4`, `2.mp4`, `10.mp4` and `clip_1.mp4`, `clip_2.mp4`, `clip_10.mp4`), speeds them up to match a target duration, and exports a downloadable final file.
+VideoTimeLapse is a local web utility that combines multiple MP4 clips into one timelapse MP4 file.
 
-Generated videos are **silent by design** so you can add music later in your preferred editor.
+Generated videos are **silent by design** (no audio track), so you can add your own music later.
 
 ## Requirements
 
 - Python 3.11+
-- FFmpeg installed and available in PATH (`ffmpeg` and `ffprobe`)
+- FFmpeg and FFprobe available in PATH (`ffmpeg` and `ffprobe`)
 
-## Windows FFmpeg Install
+## Install FFmpeg on Windows
 
-Option 1 (recommended with winget):
+Recommended:
 
 ```powershell
 winget install Gyan.FFmpeg
 ```
 
-Option 2:
+Or install FFmpeg manually and add its `bin` folder to PATH.
 
-1. Download FFmpeg manually.
-2. Extract it.
-3. Add the FFmpeg `bin` folder to your Windows PATH.
+## Quick Start on Windows (Recommended)
 
-## Setup
+1. Clone the repository:
 
-From the repository root:
+```powershell
+git clone https://github.com/stygian-eclipse/VideoTimeLapse.git
+cd VideoTimeLapse
+```
+
+2. Run the launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_timelapse_maker.ps1
+```
+
+This script will:
+- Create `.venv` if missing
+- Install dependencies from `requirements.txt`
+- Start the local FastAPI server
+- Open your browser automatically at `http://127.0.0.1:8000`
+- Keep the terminal open so you can see logs
+
+## Manual Developer Setup
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-
-Run the server:
-
-```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-Open:
-
-`http://127.0.0.1:8000`
 
 ## Usage
 
-1. Open the local URL in your browser.
-2. Select at least 2 `.mp4` files (for example `1.mp4`, `2.mp4`, `3.mp4`, `10.mp4`).
-3. Set:
-   - target output duration (5-300 seconds)
-   - transition duration (0-3 seconds)
-   - output filename
-   - transition mode (crossfade or simple cuts)
-4. Click **Generate Timelapse**.
-5. Wait for status updates, then download the final MP4.
+1. Select at least 2 MP4 clips.
+2. Use filenames like `1.mp4`, `2.mp4`, `10.mp4` for predictable order.
+3. Choose target output duration (5-300 seconds).
+4. Choose transition duration (0-3 seconds).
+5. Generate and download the final MP4.
 
-## What The App Does
+## Output Behavior
 
-- Validates uploads (MP4 only, minimum 2 files).
-- Detects FFmpeg/FFprobe availability.
-- Saves uploaded files in a unique timestamped session folder in `work/uploads/`.
-- Sorts filenames naturally before processing.
-- Probes source clip durations and dimensions using FFprobe.
-- Normalizes clips to a shared format with FFmpeg:
-  - based on first clip resolution
-  - even dimensions for H.264 compatibility
-  - preserved aspect ratio (scale + pad)
-  - constant 30 fps
-  - `yuv420p`
-  - no audio
-- Computes speed so all clips fit the requested target duration.
-- Combines with crossfades or simple cuts.
-  - If requested crossfade duration is too long after speed-up, it is reduced automatically.
-  - If crossfade still cannot be applied safely, the app falls back to simple cuts and reports a warning.
-- Exports final MP4/H.264 (`libx264`, `crf 20`, `preset medium`, `+faststart`) with no audio.
-
-## API Endpoints
-
-- `GET /` - Web UI
-- `GET /health` - JSON health + FFmpeg availability
-- `POST /api/process` - Start processing job
-- `GET /api/status/{job_id}` - Poll processing status
-- `GET /download/{file_name}` - Safe download for generated MP4
+- Clips are sorted naturally by filename before processing
+- All clips are sped up to fit the requested target duration
+- Crossfades are applied when enabled (with safe fallback to cuts)
+- Final output is a silent MP4 (H.264, browser-downloadable)
 
 ## Troubleshooting
 
+- PowerShell execution policy:
+  - If scripts are blocked, run:
+  - `powershell -ExecutionPolicy Bypass -File .\run_timelapse_maker.ps1`
 - FFmpeg not found:
-  - Confirm `ffmpeg -version` and `ffprobe -version` work in PowerShell.
-  - Reopen terminal after changing PATH.
+  - Check `ffmpeg -version` and `ffprobe -version`
+  - Install with `winget install Gyan.FFmpeg` and reopen PowerShell
+- Browser does not open automatically:
+  - Open `http://127.0.0.1:8000` manually
 - Output duration slightly different:
-  - Minor differences can happen from frame rounding during encoding.
+  - Small differences can happen due to frame rounding
 - Crossfade too long:
-  - The app auto-reduces transition duration when possible.
-  - If clips are still too short, it falls back to cut mode automatically.
-- Very large files take time:
-  - Processing is CPU-intensive, especially with many clips and crossfades.
+  - Transition duration may be reduced automatically, or fallback to cuts
+- Large files take time:
+  - Processing is CPU-intensive and may take several minutes
 
 ## Project Structure
 
@@ -115,20 +100,25 @@ work/
   outputs/
   temp/
 
+run_timelapse_maker.ps1
+run_app.py
 requirements.txt
 README.md
 .gitignore
 ```
 
-## Local Run/Test Commands (PowerShell)
+## API Endpoints
+
+- `GET /` - Web UI
+- `GET /health` - Health and FFmpeg availability
+- `POST /api/process` - Start processing job
+- `GET /api/status/{job_id}` - Poll job status
+- `GET /download/{file_name}` - Download generated MP4
+
+## Validation
+
+Run a quick smoke test:
 
 ```powershell
-cd c:\A_Various_AI_Projects_Tasks\VideoTimeLapse
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-ffmpeg -version
-ffprobe -version
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+python -m pytest tests/test_smoke.py
 ```

@@ -2,12 +2,81 @@ const form = document.getElementById("timelapse-form");
 const submitBtn = document.getElementById("submit-btn");
 const statusBox = document.getElementById("status-box");
 const downloadLink = document.getElementById("download-link");
+const selectedFilesBox = document.getElementById("selected-files");
+const filesInput = document.getElementById("files");
 
 let pollTimer = null;
 
 function setStatus(text) {
     statusBox.textContent = text;
     statusBox.scrollTop = statusBox.scrollHeight;
+}
+
+function naturalSortFileNames(names) {
+    const splitRegex = /(\d+)/;
+    const hasNumberRegex = /\d/;
+    return [...names].sort((a, b) => {
+        const aName = a.toLowerCase();
+        const bName = b.toLowerCase();
+
+        const aHasNumber = hasNumberRegex.test(aName);
+        const bHasNumber = hasNumberRegex.test(bName);
+        if (aHasNumber && !bHasNumber) {
+            return -1;
+        }
+        if (!aHasNumber && bHasNumber) {
+            return 1;
+        }
+        if (!aHasNumber && !bHasNumber) {
+            return aName.localeCompare(bName);
+        }
+
+        const aParts = aName.split(splitRegex);
+        const bParts = bName.split(splitRegex);
+        const limit = Math.max(aParts.length, bParts.length);
+        for (let i = 0; i < limit; i += 1) {
+            const aPart = aParts[i] ?? "";
+            const bPart = bParts[i] ?? "";
+            const aNumeric = /^\d+$/.test(aPart);
+            const bNumeric = /^\d+$/.test(bPart);
+            if (aNumeric && bNumeric) {
+                const diff = Number(aPart) - Number(bPart);
+                if (diff !== 0) {
+                    return diff;
+                }
+                continue;
+            }
+            const cmp = aPart.localeCompare(bPart);
+            if (cmp !== 0) {
+                return cmp;
+            }
+        }
+        return 0;
+    });
+}
+
+function renderSelectedFiles() {
+    if (!filesInput.files || filesInput.files.length === 0) {
+        selectedFilesBox.classList.add("hidden");
+        selectedFilesBox.replaceChildren();
+        return;
+    }
+
+    const fileNames = Array.from(filesInput.files).map((file) => file.name);
+    const sorted = naturalSortFileNames(fileNames);
+    selectedFilesBox.replaceChildren();
+
+    const title = document.createElement("strong");
+    title.textContent = "Selected files (natural order):";
+    const list = document.createElement("ul");
+    for (const name of sorted) {
+        const item = document.createElement("li");
+        item.textContent = name;
+        list.appendChild(item);
+    }
+    selectedFilesBox.appendChild(title);
+    selectedFilesBox.appendChild(list);
+    selectedFilesBox.classList.remove("hidden");
 }
 
 function setMessages(messages, state, errorText) {
@@ -54,7 +123,6 @@ async function pollStatus(jobId) {
 form.addEventListener("submit", async (event) => {
     event.preventDefault();
 
-    const filesInput = document.getElementById("files");
     if (!filesInput.files || filesInput.files.length < 2) {
         setStatus("Please select at least 2 MP4 files.");
         return;
@@ -78,7 +146,12 @@ form.addEventListener("submit", async (event) => {
             method: "POST",
             body: formData,
         });
-        const payload = await response.json();
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (_err) {
+            payload = {};
+        }
         if (!response.ok) {
             throw new Error(payload.detail || "Processing could not start.");
         }
@@ -96,3 +169,5 @@ form.addEventListener("submit", async (event) => {
         setStatus(`Error: ${err.message}`);
     }
 });
+
+filesInput.addEventListener("change", renderSelectedFiles);

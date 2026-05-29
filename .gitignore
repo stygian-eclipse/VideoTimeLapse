@@ -1,22 +1,24 @@
 .venv/
 venv/
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.log
 *.tmp
 *.bak
+*.mp4
 
 # Local working data
+work/uploads/
 work/uploads/*
 !work/uploads/.gitkeep
+work/temp/
 work/temp/*
 !work/temp/.gitkeep
-work/outputs/*.mp4
-work/outputs/*.mov
-work/outputs/*.mkv
-work/outputs/*.avi
+work/outputs/
+work/outputs/*
 !work/outputs/.gitkeep
 
 # OS/editor noise

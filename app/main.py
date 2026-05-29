@@ -116,7 +116,7 @@ def run_processing_job(
     try:
         set_job_status(job_id, state="running")
         append_job_message(job_id, "Processing started.")
-        input_files = sorted(upload_dir.glob("*.mp4"))
+        input_files = [path for path in upload_dir.iterdir() if path.is_file() and path.suffix.lower() == ".mp4"]
         if len(input_files) < 2:
             raise ProcessingError("Less than 2 uploaded MP4 files were found after upload.")
 

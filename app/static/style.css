@@ -76,6 +76,31 @@ input[type="file"] {
     font-weight: 600;
 }
 
+.selected-files {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fbfcff;
+    padding: 10px 12px;
+    font-size: 14px;
+}
+
+.selected-files strong {
+    display: block;
+    margin-bottom: 6px;
+}
+
+.selected-files ul {
+    margin: 0;
+    padding-left: 18px;
+    max-height: 140px;
+    overflow: auto;
+}
+
+.selected-files li {
+    margin: 2px 0;
+    word-break: break-word;
+}
+
 button {
     border: none;
     border-radius: 10px;

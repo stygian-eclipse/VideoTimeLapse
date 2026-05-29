@@ -4,8 +4,40 @@ const statusBox = document.getElementById("status-box");
 const downloadLink = document.getElementById("download-link");
 const selectedFilesBox = document.getElementById("selected-files");
 const filesInput = document.getElementById("files");
+const overlayRowsContainer = document.getElementById("overlay-rows");
+const addOverlayBtn = document.getElementById("add-overlay-btn");
+const overlaysJsonInput = document.getElementById("overlays_json");
+
+const ALLOWED_PLACEMENTS = new Set([
+    "upper left",
+    "upper center",
+    "upper right",
+    "center",
+    "lower left",
+    "lower center",
+    "lower right",
+]);
 
 let pollTimer = null;
+let heartbeatTimer = null;
+
+async function sendHeartbeat() {
+    try {
+        await fetch("/api/heartbeat", {
+            method: "POST",
+            cache: "no-store",
+        });
+    } catch (_err) {
+        // Best effort only: UI should continue to function even if heartbeat fails.
+    }
+}
+
+function startHeartbeat() {
+    void sendHeartbeat();
+    heartbeatTimer = setInterval(() => {
+        void sendHeartbeat();
+    }, 3000);
+}
 
 function setStatus(text) {
     statusBox.textContent = text;
@@ -90,6 +122,94 @@ function setMessages(messages, state, errorText) {
     setStatus(lines.join("\n"));
 }
 
+function buildOverlayRow() {
+    const row = document.createElement("div");
+    row.className = "overlay-row";
+    row.innerHTML = `
+        <div class="overlay-grid">
+            <label>Text
+                <input type="text" data-overlay="text" maxlength="120" placeholder="#BeforeForever">
+            </label>
+            <label>Start (s)
+                <input type="number" data-overlay="start_time" min="0" step="0.1" value="0">
+            </label>
+            <label>End (s)
+                <input type="number" data-overlay="end_time" min="0" step="0.1" value="5">
+            </label>
+            <label>Placement
+                <select data-overlay="placement">
+                    <option value="upper left">upper left</option>
+                    <option value="upper center">upper center</option>
+                    <option value="upper right">upper right</option>
+                    <option value="center">center</option>
+                    <option value="lower left">lower left</option>
+                    <option value="lower center" selected>lower center</option>
+                    <option value="lower right">lower right</option>
+                </select>
+            </label>
+            <label>Font size
+                <input type="number" data-overlay="font_size" min="12" max="120" step="1" value="36">
+            </label>
+            <button type="button" class="remove-overlay-btn">Remove</button>
+        </div>
+    `;
+
+    row.querySelector(".remove-overlay-btn").addEventListener("click", () => {
+        row.remove();
+        if (overlayRowsContainer.children.length === 0) {
+            overlayRowsContainer.appendChild(buildOverlayRow());
+        }
+    });
+    return row;
+}
+
+function collectValidatedOverlays() {
+    const rows = Array.from(overlayRowsContainer.querySelectorAll(".overlay-row"));
+    const overlays = [];
+    for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        const index = i + 1;
+        const text = row.querySelector('[data-overlay="text"]').value.trim();
+        const startValue = row.querySelector('[data-overlay="start_time"]').value;
+        const endValue = row.querySelector('[data-overlay="end_time"]').value;
+        const placement = row.querySelector('[data-overlay="placement"]').value.trim().toLowerCase();
+        const fontSizeValue = row.querySelector('[data-overlay="font_size"]').value;
+
+        if (!text) {
+            continue;
+        }
+        if (text.length > 120) {
+            throw new Error(`Overlay row ${index}: text must be 120 characters or fewer.`);
+        }
+
+        const startTime = Number(startValue);
+        const endTime = Number(endValue);
+        const fontSize = Number(fontSizeValue);
+
+        if (Number.isNaN(startTime) || startTime < 0) {
+            throw new Error(`Overlay row ${index}: start time must be a number >= 0.`);
+        }
+        if (Number.isNaN(endTime) || endTime <= startTime) {
+            throw new Error(`Overlay row ${index}: end time must be greater than start time.`);
+        }
+        if (!ALLOWED_PLACEMENTS.has(placement)) {
+            throw new Error(`Overlay row ${index}: placement is invalid.`);
+        }
+        if (!Number.isInteger(fontSize) || fontSize < 12 || fontSize > 120) {
+            throw new Error(`Overlay row ${index}: font size must be an integer between 12 and 120.`);
+        }
+
+        overlays.push({
+            text,
+            start_time: startTime,
+            end_time: endTime,
+            placement,
+            font_size: fontSize,
+        });
+    }
+    return overlays;
+}
+
 async function pollStatus(jobId) {
     try {
         const response = await fetch(`/api/status/${jobId}`);
@@ -128,13 +248,23 @@ form.addEventListener("submit", async (event) => {
         return;
     }
 
+    let overlays = [];
+    try {
+        overlays = collectValidatedOverlays();
+    } catch (err) {
+        setStatus(`Error: ${err.message}`);
+        return;
+    }
+
     submitBtn.disabled = true;
     submitBtn.textContent = "Processing...";
     downloadLink.classList.add("hidden");
     downloadLink.href = "#";
     setStatus("Uploading files and starting processing...");
 
+    overlaysJsonInput.value = JSON.stringify(overlays);
     const formData = new FormData(form);
+    formData.set("overlays_json", overlaysJsonInput.value);
     if (!document.getElementById("use_crossfade").checked) {
         formData.set("use_crossfade", "false");
     } else {
@@ -171,3 +301,23 @@ form.addEventListener("submit", async (event) => {
 });
 
 filesInput.addEventListener("change", renderSelectedFiles);
+addOverlayBtn.addEventListener("click", () => {
+    overlayRowsContainer.appendChild(buildOverlayRow());
+});
+overlayRowsContainer.appendChild(buildOverlayRow());
+startHeartbeat();
+
+window.addEventListener("pagehide", () => {
+    try {
+        const blob = new Blob(["{}"], {type: "application/json"});
+        navigator.sendBeacon("/api/heartbeat", blob);
+    } catch (_err) {
+        // Ignore beacon errors.
+    }
+});
+
+window.addEventListener("beforeunload", () => {
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+    }
+});

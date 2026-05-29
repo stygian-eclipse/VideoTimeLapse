@@ -101,6 +101,84 @@ input[type="file"] {
     word-break: break-word;
 }
 
+.overlay-section {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fbfcff;
+    padding: 12px;
+}
+
+.overlay-section h2 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+}
+
+.overlay-help {
+    margin: 0 0 10px 0;
+    color: var(--muted);
+    font-size: 14px;
+}
+
+.overlay-rows {
+    display: grid;
+    gap: 10px;
+}
+
+.overlay-row {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px;
+    background: #fff;
+    display: grid;
+    gap: 8px;
+}
+
+.overlay-grid {
+    display: grid;
+    grid-template-columns: 2.2fr 1fr 1fr 1.4fr 1fr auto;
+    gap: 8px;
+    align-items: end;
+}
+
+.overlay-grid label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.overlay-grid select,
+.overlay-grid input[type="text"],
+.overlay-grid input[type="number"] {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+}
+
+.overlay-actions {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.secondary-btn {
+    background: #334155;
+}
+
+.secondary-btn:hover {
+    background: #1f2937;
+}
+
+.remove-overlay-btn {
+    background: #b91c1c;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.remove-overlay-btn:hover {
+    background: #991b1b;
+}
+
 button {
     border: none;
     border-radius: 10px;
@@ -160,4 +238,10 @@ button:disabled {
 
 .hidden {
     display: none;
+}
+
+@media (max-width: 900px) {
+    .overlay-grid {
+        grid-template-columns: 1fr 1fr;
+    }
 }

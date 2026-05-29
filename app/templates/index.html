@@ -47,6 +47,18 @@
                 Use crossfade transitions (disable for simple cuts)
             </label>
 
+            <section class="overlay-section">
+                <h2>Text / Hashtag Overlays</h2>
+                <p class="overlay-help">
+                    Add optional burned-in text (hashtags, handles, captions). Empty rows are ignored.
+                </p>
+                <div id="overlay-rows" class="overlay-rows"></div>
+                <div class="overlay-actions">
+                    <button id="add-overlay-btn" type="button" class="secondary-btn">Add Overlay Row</button>
+                </div>
+            </section>
+
+            <input type="hidden" id="overlays_json" name="overlays_json" value="[]">
             <button id="submit-btn" type="submit">Generate Timelapse</button>
         </form>
 

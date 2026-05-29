@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 
@@ -16,6 +16,18 @@ CRF = "20"
 PRESET = "medium"
 MIN_TRANSITION_FLOOR = 0.05
 STDERR_TAIL_LINES = 25
+OVERLAY_TEXT_MAX_LENGTH = 120
+OVERLAY_FONT_MIN = 12
+OVERLAY_FONT_MAX = 120
+OVERLAY_ALLOWED_PLACEMENTS = {
+    "upper left",
+    "upper center",
+    "upper right",
+    "center",
+    "lower left",
+    "lower center",
+    "lower right",
+}
 
 
 class ProcessingError(Exception):
@@ -28,6 +40,15 @@ class VideoInfo:
     duration: float
     width: int
     height: int
+
+
+@dataclass(frozen=True)
+class TextOverlay:
+    text: str
+    start_time: float
+    end_time: float
+    placement: str
+    font_size: int
 
 
 def check_ffmpeg_tools() -> tuple[str, str]:
@@ -74,6 +95,104 @@ def choose_output_path(outputs_dir: Path, output_name: str) -> Path:
         return candidate
     stem = Path(base_name).stem
     return outputs_dir / f"{stem}_{uuid4().hex[:8]}.mp4"
+
+
+def validate_text_overlays_payload(payload: Any) -> list[TextOverlay]:
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise ProcessingError("Overlay configuration must be a JSON list.")
+
+    validated: list[TextOverlay] = []
+    for idx, row in enumerate(payload, start=1):
+        if not isinstance(row, dict):
+            raise ProcessingError(f"Overlay row {idx} is invalid.")
+
+        raw_text = str(row.get("text", "")).strip()
+        if not raw_text:
+            # Ignore completely empty rows.
+            continue
+        if len(raw_text) > OVERLAY_TEXT_MAX_LENGTH:
+            raise ProcessingError(
+                f"Overlay row {idx}: text is too long (max {OVERLAY_TEXT_MAX_LENGTH} characters)."
+            )
+
+        try:
+            start_time = float(row.get("start_time", 0))
+            end_time = float(row.get("end_time", 0))
+        except (TypeError, ValueError) as exc:
+            raise ProcessingError(f"Overlay row {idx}: start/end time must be numeric.") from exc
+
+        if start_time < 0:
+            raise ProcessingError(f"Overlay row {idx}: start time must be >= 0.")
+        if end_time <= start_time:
+            raise ProcessingError(f"Overlay row {idx}: end time must be greater than start time.")
+
+        placement = str(row.get("placement", "")).strip().lower()
+        if placement not in OVERLAY_ALLOWED_PLACEMENTS:
+            raise ProcessingError(f"Overlay row {idx}: invalid placement '{placement}'.")
+
+        try:
+            font_size = int(row.get("font_size", 0))
+        except (TypeError, ValueError) as exc:
+            raise ProcessingError(f"Overlay row {idx}: font size must be an integer.") from exc
+        if font_size < OVERLAY_FONT_MIN or font_size > OVERLAY_FONT_MAX:
+            raise ProcessingError(
+                f"Overlay row {idx}: font size must be between {OVERLAY_FONT_MIN} and {OVERLAY_FONT_MAX}."
+            )
+
+        validated.append(
+            TextOverlay(
+                text=raw_text,
+                start_time=start_time,
+                end_time=end_time,
+                placement=placement,
+                font_size=font_size,
+            )
+        )
+
+    return validated
+
+
+def overlay_position_expression(placement: str) -> tuple[str, str]:
+    mapping = {
+        "upper left": ("40", "40"),
+        "upper center": ("(w-text_w)/2", "40"),
+        "upper right": ("w-text_w-40", "40"),
+        "center": ("(w-text_w)/2", "(h-text_h)/2"),
+        "lower left": ("40", "h-text_h-40"),
+        "lower center": ("(w-text_w)/2", "h-text_h-40"),
+        "lower right": ("w-text_w-40", "h-text_h-40"),
+    }
+    try:
+        return mapping[placement]
+    except KeyError as exc:
+        raise ProcessingError(f"Unsupported overlay placement: {placement}") from exc
+
+
+def escape_drawtext_text(text: str) -> str:
+    escaped = text.replace("\r", " ").replace("\n", " ")
+    escaped = escaped.replace("\\", "\\\\")
+    escaped = escaped.replace(":", r"\:")
+    escaped = escaped.replace("'", r"\'")
+    escaped = escaped.replace("%", r"\%")
+    escaped = escaped.replace(",", r"\,")
+    return escaped
+
+
+def _escape_drawtext_path(path: Path) -> str:
+    value = str(path)
+    value = value.replace("\\", "\\\\")
+    value = value.replace(":", r"\:")
+    value = value.replace("'", r"\'")
+    return value
+
+
+def _find_fontfile_for_drawtext() -> Path | None:
+    candidate = Path(r"C:\Windows\Fonts\arial.ttf")
+    if candidate.exists():
+        return candidate
+    return None
 
 
 def _summarize_stderr(text: str, limit: int = STDERR_TAIL_LINES) -> str:
@@ -252,6 +371,59 @@ def _combine_with_crossfade(
     _run_command(cmd, "Failed to combine clips with crossfade transitions.")
 
 
+def _build_drawtext_filter(text_overlays: list[TextOverlay]) -> str:
+    fontfile = _find_fontfile_for_drawtext()
+    filters: list[str] = []
+    for overlay in text_overlays:
+        x_expr, y_expr = overlay_position_expression(overlay.placement)
+        escaped_text = escape_drawtext_text(overlay.text)
+        parts = [
+            "fontcolor=white",
+            "box=1",
+            "boxcolor=black@0.55",
+            "boxborderw=12",
+            f"fontsize={overlay.font_size}",
+            f"x={x_expr}",
+            f"y={y_expr}",
+            f"enable='between(t,{overlay.start_time:.3f},{overlay.end_time:.3f})'",
+            f"text='{escaped_text}'",
+        ]
+        if fontfile:
+            parts.append(f"fontfile='{_escape_drawtext_path(fontfile)}'")
+        filters.append("drawtext=" + ":".join(parts))
+    return ",".join(filters)
+
+
+def _apply_text_overlays(
+    ffmpeg_path: str,
+    input_path: Path,
+    output_path: Path,
+    text_overlays: list[TextOverlay],
+) -> None:
+    filter_chain = _build_drawtext_filter(text_overlays)
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-i",
+        str(input_path),
+        "-vf",
+        filter_chain,
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        PRESET,
+        "-crf",
+        CRF,
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    _run_command(cmd, "Failed to apply text overlays.")
+
+
 def _calculate_safe_transition(
     requested_transition: float,
     clip_durations: list[float],
@@ -282,6 +454,7 @@ def process_timelapse(
     target_duration: float,
     transition_duration: float,
     use_crossfade: bool,
+    text_overlays: list[TextOverlay] | None = None,
     status_callback: Callable[[str], None] | None = None,
     debug_mode: bool = False,
     temp_root: Path | None = None,
@@ -320,6 +493,7 @@ def process_timelapse(
     working_parent = temp_root if temp_root else output_path.parent
     working_parent.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(mkdtemp(prefix="vtl_", dir=str(working_parent)))
+    overlay_rows = text_overlays or []
     normalized_files: list[Path] = []
     try:
         for idx, info in enumerate(video_infos, start=1):
@@ -351,6 +525,10 @@ def process_timelapse(
             if effective_transition <= 0:
                 can_crossfade = False
 
+        base_output_path = output_path
+        if overlay_rows:
+            base_output_path = temp_dir / "timelapse_base.mp4"
+
         update("Combining normalized clips into final MP4.")
         if can_crossfade:
             try:
@@ -359,7 +537,7 @@ def process_timelapse(
                     normalized_files=normalized_files,
                     sped_durations=normalized_durations,
                     transition_duration=effective_transition,
-                    output_path=output_path,
+                    output_path=base_output_path,
                 )
                 predicted_duration = sum(normalized_durations) - effective_transition * (
                     len(normalized_durations) - 1
@@ -373,7 +551,7 @@ def process_timelapse(
                 _combine_with_cuts(
                     ffmpeg_path=ffmpeg_path,
                     normalized_files=normalized_files,
-                    output_path=output_path,
+                    output_path=base_output_path,
                 )
                 predicted_duration = sum(normalized_durations)
         else:
@@ -382,9 +560,20 @@ def process_timelapse(
             _combine_with_cuts(
                 ffmpeg_path=ffmpeg_path,
                 normalized_files=normalized_files,
-                output_path=output_path,
+                output_path=base_output_path,
             )
             predicted_duration = sum(normalized_durations)
+
+        if overlay_rows:
+            update("Applying text overlays...")
+            _apply_text_overlays(
+                ffmpeg_path=ffmpeg_path,
+                input_path=base_output_path,
+                output_path=output_path,
+                text_overlays=overlay_rows,
+            )
+        else:
+            update("No text overlays requested.")
 
         update(
             "Estimated final duration: "

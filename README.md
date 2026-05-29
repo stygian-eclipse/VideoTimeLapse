@@ -1,6 +1,11 @@
 # VideoTimeLapse
 
-VideoTimeLapse is a local web utility that combines multiple MP4 clips into one timelapse MP4 file.
+VideoTimeLapse is a local web utility that can:
+- create timelapse MP4s from multiple MP4 clips
+- sort clips naturally by filename (`1.mp4`, `2.mp4`, `10.mp4`)
+- generate silent output by design
+- add optional text/hashtag overlays with start/end time and placement
+- create a Desktop shortcut for easy launching
 
 Generated videos are **silent by design** (no audio track), so you can add your own music later.
 
@@ -41,6 +46,33 @@ This script will:
 - Open your browser automatically at `http://127.0.0.1:8000`
 - Keep the terminal open so you can see logs
 
+Auto-shutdown behavior:
+- If you close the VideoTimeLapse browser tab/window, the local server stops automatically after a short delay.
+- If a processing job is running, shutdown is delayed until processing finishes.
+
+## Create a Desktop Shortcut
+
+Create a launcher shortcut:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\create_shortcut.ps1
+```
+
+Optional Start Menu shortcut:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\create_shortcut.ps1 -StartMenu
+```
+
+Optional all-users Start Menu shortcut (may require admin rights):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\create_shortcut.ps1 -StartMenu -AllUsers
+```
+
+Windows does not reliably allow safe automatic taskbar pinning from scripts.  
+Create the shortcut, then right-click it and choose **Pin to taskbar**.
+
 ## Manual Developer Setup
 
 ```powershell
@@ -51,19 +83,39 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+Disable auto-shutdown during development:
+
+```powershell
+$env:VTL_DISABLE_AUTO_SHUTDOWN="1"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
 ## Usage
 
 1. Select at least 2 MP4 clips.
 2. Use filenames like `1.mp4`, `2.mp4`, `10.mp4` for predictable order.
 3. Choose target output duration (5-300 seconds).
 4. Choose transition duration (0-3 seconds).
-5. Generate and download the final MP4.
+5. Optionally add text/hashtag overlay rows.
+6. Set overlay text, start/end time, placement, and font size.
+7. Generate and download the final MP4.
+
+Overlay text examples:
+- `#BeforeForever`
+- `@AdgoAsekwa`
+- `Out now`
+
+Important overlay notes:
+- Overlays are burned into the video permanently.
+- Output remains silent by design.
+- If text contains unusual symbols and FFmpeg fails, simplify the text and retry.
 
 ## Output Behavior
 
 - Clips are sorted naturally by filename before processing
 - All clips are sped up to fit the requested target duration
 - Crossfades are applied when enabled (with safe fallback to cuts)
+- Optional text/hashtag overlays can be burned into the video
 - Final output is a silent MP4 (H.264, browser-downloadable)
 
 ## Troubleshooting
@@ -101,6 +153,7 @@ work/
   temp/
 
 run_timelapse_maker.ps1
+create_shortcut.ps1
 run_app.py
 requirements.txt
 README.md
@@ -111,6 +164,7 @@ README.md
 
 - `GET /` - Web UI
 - `GET /health` - Health and FFmpeg availability
+- `POST /api/heartbeat` - Browser heartbeat for auto-shutdown
 - `POST /api/process` - Start processing job
 - `GET /api/status/{job_id}` - Poll job status
 - `GET /download/{file_name}` - Download generated MP4

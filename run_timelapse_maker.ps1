@@ -11,6 +11,14 @@ function Write-WarnMsg {
     Write-Host "[VideoTimeLapse] $Message" -ForegroundColor Yellow
 }
 
+function Test-IsInteractive {
+    try {
+        return [Environment]::UserInteractive -and $Host.Name -ne "ServerRemoteHost"
+    } catch {
+        return $false
+    }
+}
+
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location -Path $repoRoot
 
@@ -19,6 +27,8 @@ $venvPython = Join-Path $venvPath "Scripts\python.exe"
 $activateScript = Join-Path $venvPath "Scripts\Activate.ps1"
 $requirementsPath = Join-Path $repoRoot "requirements.txt"
 $appUrl = "http://127.0.0.1:8000"
+$shortcutScriptPath = Join-Path $repoRoot "create_shortcut.ps1"
+$desktopShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoTimeLapse.lnk"
 
 Write-Step "Working directory: $repoRoot"
 
@@ -81,6 +91,18 @@ if (-not $ffmpegOk -or -not $ffprobeOk) {
     Write-WarnMsg "The server will still start; the UI and API will also report this issue."
 } else {
     Write-Step "FFmpeg and FFprobe are available."
+}
+
+if ((Test-IsInteractive) -and (Test-Path -LiteralPath $shortcutScriptPath) -and -not (Test-Path -LiteralPath $desktopShortcutPath)) {
+    try {
+        $answer = Read-Host "Create a Desktop shortcut for VideoTimeLapse? [Y/N]"
+        if ($answer -match '^(?i)y(es)?$') {
+            Write-Step "Creating Desktop shortcut..."
+            & powershell -ExecutionPolicy Bypass -File $shortcutScriptPath -Desktop $true
+        }
+    } catch {
+        Write-WarnMsg "Could not create shortcut automatically. You can run .\create_shortcut.ps1 later."
+    }
 }
 
 Write-Step "Scheduling browser open: $appUrl"

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import logging
+import os
+import signal
 import shutil
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,10 +19,12 @@ from fastapi.templating import Jinja2Templates
 
 from app.video_processor import (
     ProcessingError,
+    TextOverlay,
     check_ffmpeg_tools,
     choose_output_path,
     process_timelapse,
     safe_output_name,
+    validate_text_overlays_payload,
 )
 
 
@@ -35,10 +42,21 @@ for directory in (UPLOADS_ROOT, TEMP_ROOT, OUTPUTS_ROOT):
 app = FastAPI(title="VideoTimeLapse", version="1.0.0")
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+logger = logging.getLogger("videotimelapse")
 
 
 jobs_lock = threading.Lock()
 jobs: dict[str, dict[str, Any]] = {}
+heartbeat_lock = threading.Lock()
+auto_shutdown_lock = threading.Lock()
+shutdown_lock = threading.Lock()
+last_heartbeat_at = time.monotonic()
+auto_shutdown_started = False
+shutdown_initiated = False
+
+HEARTBEAT_INTERVAL_SECONDS = 3
+HEARTBEAT_TIMEOUT_SECONDS = 12
+HEARTBEAT_MONITOR_CHECK_SECONDS = 2
 
 
 def set_job_status(job_id: str, **kwargs: Any) -> None:
@@ -62,6 +80,93 @@ def parse_bool(value: str | None) -> bool:
     if value is None:
         return False
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def is_auto_shutdown_disabled() -> bool:
+    return os.getenv("VTL_DISABLE_AUTO_SHUTDOWN", "").strip() == "1"
+
+
+def record_heartbeat() -> float:
+    now = time.monotonic()
+    with heartbeat_lock:
+        global last_heartbeat_at
+        last_heartbeat_at = now
+    return now
+
+
+def heartbeat_age_seconds() -> float:
+    with heartbeat_lock:
+        return time.monotonic() - last_heartbeat_at
+
+
+def has_active_jobs() -> bool:
+    with jobs_lock:
+        return any(job.get("state") in {"queued", "running"} for job in jobs.values())
+
+
+def _request_server_shutdown() -> None:
+    global shutdown_initiated
+    with shutdown_lock:
+        if shutdown_initiated:
+            return
+        shutdown_initiated = True
+
+    def shutdown_worker() -> None:
+        logger.warning("Shutting down server.")
+        try:
+            # Best effort graceful path for Uvicorn.
+            os.kill(os.getpid(), signal.SIGINT)
+            time.sleep(1.0)
+        except Exception:  # noqa: BLE001
+            pass
+        # Fallback for local desktop utility: if graceful shutdown did not stop
+        # the process, force-exit after a short delay.
+        os._exit(0)
+
+    threading.Thread(target=shutdown_worker, name="vtl-shutdown", daemon=True).start()
+
+
+def _heartbeat_monitor_loop() -> None:
+    logger.warning(
+        "Heartbeat monitor started (interval=%ss timeout=%ss).",
+        HEARTBEAT_MONITOR_CHECK_SECONDS,
+        HEARTBEAT_TIMEOUT_SECONDS,
+    )
+    delay_logged = False
+    while True:
+        time.sleep(HEARTBEAT_MONITOR_CHECK_SECONDS)
+        age = heartbeat_age_seconds()
+        if age <= HEARTBEAT_TIMEOUT_SECONDS:
+            delay_logged = False
+            continue
+
+        if has_active_jobs():
+            if not delay_logged:
+                logger.warning(
+                    "Heartbeat timeout detected (age=%.1fs). Shutdown delayed because processing is active.",
+                    age,
+                )
+                delay_logged = True
+            continue
+
+        logger.warning("Heartbeat timeout detected (age=%.1fs).", age)
+        _request_server_shutdown()
+        return
+
+
+def start_auto_shutdown_monitor_if_enabled() -> bool:
+    global auto_shutdown_started
+    if is_auto_shutdown_disabled():
+        logger.warning("Auto-shutdown disabled by VTL_DISABLE_AUTO_SHUTDOWN=1.")
+        return False
+    with auto_shutdown_lock:
+        if auto_shutdown_started:
+            return True
+        auto_shutdown_started = True
+    record_heartbeat()
+    thread = threading.Thread(target=_heartbeat_monitor_loop, name="vtl-heartbeat-monitor", daemon=True)
+    thread.start()
+    return True
 
 
 def validate_inputs(
@@ -112,6 +217,7 @@ def run_processing_job(
     transition_duration: float,
     output_filename: str,
     use_crossfade: bool,
+    text_overlays: list[TextOverlay],
 ) -> None:
     try:
         set_job_status(job_id, state="running")
@@ -127,6 +233,7 @@ def run_processing_job(
             target_duration=target_duration,
             transition_duration=transition_duration,
             use_crossfade=use_crossfade,
+            text_overlays=text_overlays,
             status_callback=lambda m: append_job_message(job_id, m),
             temp_root=TEMP_ROOT,
         )
@@ -161,6 +268,12 @@ def index(request: Request) -> HTMLResponse:
     )
 
 
+@app.on_event("startup")
+def startup_event() -> None:
+    record_heartbeat()
+    start_auto_shutdown_monitor_if_enabled()
+
+
 @app.get("/health")
 def health() -> JSONResponse:
     tools_available = True
@@ -186,6 +299,7 @@ async def process_endpoint(
     transition_duration: float = Form(...),
     output_filename: str = Form(...),
     use_crossfade: str | None = Form(None),
+    overlays_json: str | None = Form(None),
 ) -> JSONResponse:
     try:
         check_ffmpeg_tools()
@@ -194,6 +308,15 @@ async def process_endpoint(
 
     validate_inputs(files, target_duration, transition_duration, output_filename)
     crossfade_enabled = parse_bool(use_crossfade)
+    try:
+        overlays_payload = json.loads(overlays_json) if overlays_json else []
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Overlay configuration is not valid JSON.") from exc
+    try:
+        text_overlays = validate_text_overlays_payload(overlays_payload)
+    except ProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     session_id, upload_dir = save_uploads_to_session(files)
     job_id = f"job_{session_id}"
 
@@ -216,11 +339,18 @@ async def process_endpoint(
             transition_duration,
             output_filename,
             crossfade_enabled,
+            text_overlays,
         ),
         daemon=True,
     )
     worker.start()
     return JSONResponse({"job_id": job_id})
+
+
+@app.post("/api/heartbeat")
+def heartbeat_endpoint() -> JSONResponse:
+    record_heartbeat()
+    return JSONResponse({"status": "ok"})
 
 
 @app.get("/api/status/{job_id}")

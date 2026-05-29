@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VideoTimeLapse</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="page">
+    <section class="card">
+        <h1>VideoTimeLapse</h1>
+        <p class="subtitle">
+            Build one silent timelapse MP4 from multiple input MP4 clips.
+        </p>
+
+        {% if not ffmpeg_ok %}
+            <div class="alert alert-error">
+                <strong>FFmpeg not available:</strong> {{ ffmpeg_error }}
+            </div>
+        {% endif %}
+
+        <form id="timelapse-form">
+            <label>
+                MP4 files (minimum 2)
+                <input id="files" name="files" type="file" accept=".mp4,video/mp4" multiple required>
+            </label>
+
+            <label>
+                Target output duration (seconds, 5-300)
+                <input id="target_duration" name="target_duration" type="number" min="5" max="300" value="30" required>
+            </label>
+
+            <label>
+                Transition duration (seconds, 0-3)
+                <input id="transition_duration" name="transition_duration" type="number" min="0" max="3" step="0.1" value="0.8" required>
+            </label>
+
+            <label>
+                Output filename (.mp4)
+                <input id="output_filename" name="output_filename" type="text" value="timelapse_output.mp4" required>
+            </label>
+
+            <label class="checkbox-row">
+                <input id="use_crossfade" name="use_crossfade" type="checkbox" checked>
+                Use crossfade transitions (disable for simple cuts)
+            </label>
+
+            <button id="submit-btn" type="submit">Generate Timelapse</button>
+        </form>
+
+        <section class="status-section">
+            <h2>Status</h2>
+            <div id="status-box" class="status-box">Waiting for input.</div>
+            <a id="download-link" class="download-link hidden" href="#" download>Download Final MP4</a>
+        </section>
+    </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+*.tmp
+*.bak
+
+# Local working data
+work/uploads/*
+!work/uploads/.gitkeep
+work/temp/*
+!work/temp/.gitkeep
+work/outputs/*.mp4
+work/outputs/*.mov
+work/outputs/*.mkv
+work/outputs/*.avi
+!work/outputs/.gitkeep
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

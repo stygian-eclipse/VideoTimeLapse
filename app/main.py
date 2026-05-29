@@ -155,8 +155,9 @@ def index(request: Request) -> HTMLResponse:
         ffmpeg_ok = False
         ffmpeg_error = str(exc)
     return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "ffmpeg_ok": ffmpeg_ok, "ffmpeg_error": ffmpeg_error},
+        request=request,
+        name="index.html",
+        context={"ffmpeg_ok": ffmpeg_ok, "ffmpeg_error": ffmpeg_error},
     )
 
 
